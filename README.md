@@ -1,17 +1,3 @@
-<div align="center">
-<h1>UltraLight VM-UNet </h1>
-<h3>Parallel Vision Mamba Significantly Reduces Parameters for Skin Lesion Segmentation</h3>
-
-Renkai Wu<sup>1</sup>, Yinghao Liu<sup>2</sup>, Pengchen Liang<sup>1</sup>\*, Qing Chang<sup>1</sup>\*
-
-<sup>1</sup>  Shanghai University, <sup>2</sup>  University of Shanghai for Science and Technology
-
-
-ArXiv Preprint ([arXiv:2403.20035](https://arxiv.org/abs/2403.20035))
-
-
-</div>
-
 ## 🔥🔥Highlights🔥🔥
 ### *1.The UltraLight VM-UNet has only 0.049M parameters, 0.060 GFLOPs, and a model weight file of only 229.1 KB.*</br>
 ### *2.Parallel Vision Mamba is a winner for lightweight models.*</br>

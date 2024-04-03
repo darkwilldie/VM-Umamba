@@ -5,6 +5,7 @@ __pycache__/
 
 # custom
 *.png
+*.jpg
 *.gz
 *.zip
 *.pth
