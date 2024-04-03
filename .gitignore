@@ -1,0 +1,14 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# custom
+*.png
+*.gz
+*.zip
+*.pth
+*.npz
+*.npy
+events.out.*
+results/Ultra*

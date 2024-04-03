@@ -18,11 +18,11 @@ class setting_config:
 
     test_weights = ''
 
-    datasets = 'ISIC2017'
+    datasets = 'ISIC2018'
     if datasets == 'ISIC2017':
         data_path = ''
     elif datasets == 'ISIC2018':
-        data_path = ''
+        data_path = '/root/UltraLight-VM-UNet/ISIC2018/'
     elif datasets == 'PH2':
         data_path = ''
     else:

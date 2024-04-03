@@ -125,7 +125,7 @@ def main(config):
 
 
     print('#----------Training----------#')
-    for epoch in range(start_epoch, config.epochs + 1):
+    for epoch in tqdm(range(start_epoch, config.epochs + 1)):
 
         torch.cuda.empty_cache()
 
