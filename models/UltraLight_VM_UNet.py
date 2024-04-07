@@ -13,8 +13,20 @@ class PVMLayer(nn.Module):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.norm = nn.LayerNorm(input_dim)
-        self.mamba = Mamba(
+        self.mamba_2 = Mamba(
+                d_model=input_dim//2, # Model dimension d_model
+                d_state=d_state,  # SSM state expansion factor
+                d_conv=d_conv,    # Local convolution width
+                expand=expand,    # Block expansion factor
+        )
+        self.mamba_4 = Mamba(
                 d_model=input_dim//4, # Model dimension d_model
+                d_state=d_state,  # SSM state expansion factor
+                d_conv=d_conv,    # Local convolution width
+                expand=expand,    # Block expansion factor
+        )
+        self.mamba_8 = Mamba(
+                d_model=input_dim//8, # Model dimension d_model
                 d_state=d_state,  # SSM state expansion factor
                 d_conv=d_conv,    # Local convolution width
                 expand=expand,    # Block expansion factor
@@ -32,11 +44,13 @@ class PVMLayer(nn.Module):
         x_flat = x.reshape(B, C, n_tokens).transpose(-1, -2)
         x_norm = self.norm(x_flat)
 
-        x1, x2, x3, x4 = torch.chunk(x_norm, 4, dim=2)
-        x_mamba1 = self.mamba(x1) + self.skip_scale * x1
-        x_mamba2 = self.mamba(x2) + self.skip_scale * x2
-        x_mamba3 = self.mamba(x3) + self.skip_scale * x3
-        x_mamba4 = self.mamba(x4) + self.skip_scale * x4
+        # x1, x2, x3, x4 = torch.chunk(x_norm, 4, dim=2)
+        size = x_norm.size(2)
+        x1, x2, x3, x4 = x_norm.split([size//8, size//8, size//4, size//2], dim=2)
+        x_mamba1 = self.mamba_8(x1) + self.skip_scale * x1
+        x_mamba2 = self.mamba_8(x2) + self.skip_scale * x2
+        x_mamba3 = self.mamba_4(x3) + self.skip_scale * x3
+        x_mamba4 = self.mamba_2(x4) + self.skip_scale * x4
         x_mamba = torch.cat([x_mamba1, x_mamba2,x_mamba3,x_mamba4], dim=2)
 
         x_mamba = self.norm(x_mamba)
@@ -123,7 +137,7 @@ class SC_Att_Bridge(nn.Module):
         r1_, r2_, r3_, r4_, r5_ = t1, t2, t3, t4, t5
         t1, t2, t3, t4, t5 = t1 + r1, t2 + r2, t3 + r3, t4 + r4, t5 + r5
 
-        catt1, catt2, catt3, catt4, catt5 = self.catt(r1, r2, r3, r4, r5)
+        catt1, catt2, catt3, catt4, catt5 = self.catt(t1, t2, t3, t4, t5)
         t1, t2, t3, t4, t5 = catt1 * t1, catt2 * t2, catt3 * t3, catt4 * t4, catt5 * t5
 
         return t1 + r1_, t2 + r2_, t3 + r3_, t4 + r4_, t5 + r5_
