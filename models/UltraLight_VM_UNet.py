@@ -123,7 +123,7 @@ class SC_Att_Bridge(nn.Module):
         r1_, r2_, r3_, r4_, r5_ = t1, t2, t3, t4, t5
         t1, t2, t3, t4, t5 = t1 + r1, t2 + r2, t3 + r3, t4 + r4, t5 + r5
 
-        catt1, catt2, catt3, catt4, catt5 = self.catt(t1, t2, t3, t4, t5)
+        catt1, catt2, catt3, catt4, catt5 = self.catt(r1, r2, r3, r4, r5)
         t1, t2, t3, t4, t5 = catt1 * t1, catt2 * t2, catt3 * t3, catt4 * t4, catt5 * t5
 
         return t1 + r1_, t2 + r2_, t3 + r3_, t4 + r4_, t5 + r5_

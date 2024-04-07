@@ -18,7 +18,7 @@ class setting_config:
 
     test_weights = ''
 
-    datasets = 'ISIC2017'
+    datasets = 'ISIC2018'
     if datasets == 'ISIC2017':
         data_path = '/home/ljc/data/ISIC2017/'
     elif datasets == 'ISIC2018':
@@ -41,10 +41,11 @@ class setting_config:
     world_size = None
     rank = None
     amp = False
-    batch_size = 8
+    batch_size = 24
     epochs = 250
 
     work_dir = 'results/' + network + '_' + datasets + '_' + datetime.now().strftime('%A_%d_%B_%Y_%Hh_%Mm_%Ss') + '/'
+    # work_dir = '/home/ljc/ulvm/results/UltraLight_VM_UNet_ISIC2018_Sunday_07_April_2024_14h_35m_10s/'
 
     print_interval = 20
     val_interval = 30
