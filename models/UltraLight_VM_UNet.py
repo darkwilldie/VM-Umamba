@@ -13,7 +13,6 @@ class PVMLayer(nn.Module):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.norm = nn.LayerNorm(input_dim)
-        # print("input_dim:", input_dim)
         self.mamba_2 = Mamba(
                 d_model=input_dim//2, # Model dimension d_model
                 d_state=d_state,  # SSM state expansion factor
@@ -35,20 +34,19 @@ class PVMLayer(nn.Module):
         self.proj = nn.Linear(input_dim, output_dim)
         self.skip_scale= nn.Parameter(torch.ones(1))
         self.dwconv = DEPTHWISECONV(input_dim, input_dim)
-        # self.dwconv2 = DEPTHWISECONV(input_dim, input_dim)
-        # self.dwconv3 = DEPTHWISECONV(input_dim, input_dim)
     
     def forward(self, x):
         if x.dtype == torch.float16:
             x = x.type(torch.float32)
-        B, C = x.shape[:2]
+        # B, C = x.shape[:2]
+        B, C, H, W = x.shape
         assert C == self.input_dim
         n_tokens = x.shape[2:].numel()
         img_dims = x.shape[2:]
         x_flat = x.reshape(B, C, n_tokens).transpose(-1, -2)
         x_norm = self.norm(x_flat)
 
-        # x1, x2, x3, x4 = torch.chunk(x_norm, 4, dim=2)
+        x1, x2, x3, x4 = torch.chunk(x_norm, 4, dim=2)
         size = x_norm.size(2)
         if (self.input_dim == 24):
             x1, x2, x3, x4 = x_norm.split([size//8, size//8, size//4, size//2], dim=2)
@@ -70,9 +68,8 @@ class PVMLayer(nn.Module):
             x_mamba = torch.cat([x_mamba1, x_mamba2], dim=2)
 
         # Fusion
-        # print("x_mamba:", x_mamba.shape)
-        # print("x_norm:", x_norm.shape)
-        # x_mamba = x_norm + self.dwconv(x_mamba)
+        x_mamba = x_mamba.transpose(-1, -2).reshape(B, C, H, W)
+        x_mamba = x_norm + self.dwconv(x_mamba).reshape(B, C, n_tokens).transpose(-1, -2)
 
         x_mamba = self.norm(x_mamba)
         x_mamba = self.proj(x_mamba)
