@@ -13,6 +13,7 @@ class PVMLayer(nn.Module):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.norm = nn.LayerNorm(input_dim)
+        # print("input_dim:", input_dim)
         self.mamba_2 = Mamba(
                 d_model=input_dim//2, # Model dimension d_model
                 d_state=d_state,  # SSM state expansion factor
@@ -33,6 +34,9 @@ class PVMLayer(nn.Module):
         )
         self.proj = nn.Linear(input_dim, output_dim)
         self.skip_scale= nn.Parameter(torch.ones(1))
+        self.dwconv = DEPTHWISECONV(input_dim, input_dim)
+        # self.dwconv2 = DEPTHWISECONV(input_dim, input_dim)
+        # self.dwconv3 = DEPTHWISECONV(input_dim, input_dim)
     
     def forward(self, x):
         if x.dtype == torch.float16:
@@ -46,12 +50,29 @@ class PVMLayer(nn.Module):
 
         # x1, x2, x3, x4 = torch.chunk(x_norm, 4, dim=2)
         size = x_norm.size(2)
-        x1, x2, x3, x4 = x_norm.split([size//8, size//8, size//4, size//2], dim=2)
-        x_mamba1 = self.mamba_8(x1) + self.skip_scale * x1
-        x_mamba2 = self.mamba_8(x2) + self.skip_scale * x2
-        x_mamba3 = self.mamba_4(x3) + self.skip_scale * x3
-        x_mamba4 = self.mamba_2(x4) + self.skip_scale * x4
-        x_mamba = torch.cat([x_mamba1, x_mamba2,x_mamba3,x_mamba4], dim=2)
+        if (self.input_dim == 24):
+            x1, x2, x3, x4 = x_norm.split([size//8, size//8, size//4, size//2], dim=2)
+            x_mamba1 = self.mamba_8(x1) + self.skip_scale * x1
+            x_mamba2 = self.mamba_8(x2) + self.skip_scale * x2
+            x_mamba3 = self.mamba_4(x3) + self.skip_scale * x3
+            x_mamba4 = self.mamba_2(x4) + self.skip_scale * x4
+            x_mamba = torch.cat([x_mamba1, x_mamba2,x_mamba3,x_mamba4], dim=2)
+        elif (self.input_dim == 32):
+            x1, x2, x3 = x_norm.split([size//4, size//4, size//2], dim=2)
+            x_mamba1 = self.mamba_4(x1) + self.skip_scale * x1
+            x_mamba2 = self.mamba_4(x2) + self.skip_scale * x2
+            x_mamba3 = self.mamba_2(x3) + self.skip_scale * x3
+            x_mamba = torch.cat([x_mamba1, x_mamba2,x_mamba3], dim=2)
+        else:
+            x1, x2 = x_norm.split([size//2, size//2], dim=2)
+            x_mamba1 = self.mamba_2(x1) + self.skip_scale * x1
+            x_mamba2 = self.mamba_2(x2) + self.skip_scale * x2
+            x_mamba = torch.cat([x_mamba1, x_mamba2], dim=2)
+
+        # Fusion
+        # print("x_mamba:", x_mamba.shape)
+        # print("x_norm:", x_norm.shape)
+        # x_mamba = x_norm + self.dwconv(x_mamba)
 
         x_mamba = self.norm(x_mamba)
         x_mamba = self.proj(x_mamba)
@@ -260,3 +281,23 @@ class UltraLight_VM_UNet(nn.Module):
         return torch.sigmoid(out0)
 
 
+class DEPTHWISECONV(nn.Module):
+    def __init__(self,in_ch,out_ch):
+        super(DEPTHWISECONV, self).__init__()
+        # 也相当于分组为1的分组卷积
+        self.depth_conv = nn.Conv2d(in_channels=in_ch,
+                                    out_channels=in_ch,
+                                    kernel_size=3,
+                                    stride=1,
+                                    padding=1,
+                                    groups=in_ch)
+        self.point_conv = nn.Conv2d(in_channels=in_ch,
+                                    out_channels=out_ch,
+                                    kernel_size=1,
+                                    stride=1,
+                                    padding=0,
+                                    groups=1)
+    def forward(self,input):
+        out = self.depth_conv(input)
+        out = self.point_conv(out)
+        return out
