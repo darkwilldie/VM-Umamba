@@ -167,4 +167,5 @@ def main(config):
 
 if __name__ == '__main__':
     config = setting_config
+    add_argument_config(config)
     main(config)
