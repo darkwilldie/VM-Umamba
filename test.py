@@ -19,18 +19,28 @@ warnings.filterwarnings("ignore")
 
 
 def main(config):
+    # get configs from setting_config and command line arguments
+    config = setting_config
+    add_argument_config(config)
 
     print('#----------Creating logger----------#')
-    sys.path.append(config.work_dir + '/')
+    # if config.work_dir not exist, throw an error
+    if not os.path.exists(config.work_dir):
+        raise Exception('work_dir is not exist!')
     log_dir = os.path.join(config.work_dir, 'log')
     checkpoint_dir = os.path.join(config.work_dir, 'checkpoints')
-    resume_model = os.path.join('')
+
     outputs = os.path.join(config.work_dir, 'outputs')
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
     if not os.path.exists(outputs):
         os.makedirs(outputs)
-
+    test_name = 'best.pth'
+    if config.test_name:
+        test_name = config.test_name
+    test_model_path = os.path.join(checkpoint_dir, test_name)
+    if not os.path.exists(test_model_path):
+        raise Exception('test model is not exist!')
     global logger
     logger = get_logger('test', log_dir)
 
@@ -84,7 +94,7 @@ def main(config):
 
 
     print('#----------Testing----------#')
-    best_weight = torch.load(resume_model, map_location=torch.device('cpu'))
+    best_weight = torch.load(test_model_path, map_location=torch.device('cpu'))
     model.module.load_state_dict(best_weight)
     loss = test_one_epoch(
             test_loader,

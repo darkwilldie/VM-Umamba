@@ -11,7 +11,7 @@ import logging
 import logging.handlers
 from matplotlib import pyplot as plt
 import argparse
-
+from datetime import datetime
 
 def update_config(config, args):
     for k, v in vars(args).items():
@@ -30,10 +30,14 @@ def add_argument_config(config):
     parser.add_argument('--batch_size', type=int, default=None, help='batch size')
     parser.add_argument('--epochs', type=int, default=None, help='epochs')
     parser.add_argument('--datasets', type=str, default=None, help='dataset name')
+    parser.add_argument('--test_name', type=str, default=None, help='test model name')
 
+    
     args = parser.parse_args()
+    if args.work_dir is not None:
+        args.work_dir = os.path.join(args.work_dir, args.datasets)+'/' + datetime.now().strftime('%Y_%B_%d_%Hh_%Mm') + '/'
     update_config(config, args)
-
+    
 
 def set_seed(seed):
     # for hash
