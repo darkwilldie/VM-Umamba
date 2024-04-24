@@ -19,6 +19,11 @@ warnings.filterwarnings("ignore")
 
 def main(config):
 
+    # get configs from setting_config and command line arguments
+    config = setting_config
+    config.add_argument_config()
+    config.set_opt_sch()
+
     print('#----------Creating logger----------#')
     sys.path.append(config.work_dir + '/')
     log_dir = os.path.join(config.work_dir, 'log')
@@ -81,7 +86,7 @@ def main(config):
     min_loss = 999
     start_epoch = 1
     min_epoch = 1
-
+    max_miou  = 0 
     if os.path.exists(resume_model):
         print('#----------Resume Model and Other params----------#')
         checkpoint = torch.load(resume_model, map_location=torch.device('cpu'))
@@ -102,7 +107,7 @@ def main(config):
 
         torch.cuda.empty_cache()
 
-        train_one_epoch(
+        train_loss = train_one_epoch(
             train_loader,
             model,
             criterion,
@@ -114,31 +119,8 @@ def main(config):
             scaler=scaler
         )
 
-        loss = val_one_epoch(
-                val_loader,
-                model,
-                criterion,
-                epoch,
-                logger,
-                config
-            )
-        loss_values.append(loss)
-        if loss < min_loss:
-            torch.save(model.module.state_dict(), os.path.join(checkpoint_dir, 'best.pth'))
-            min_loss = loss
-            min_epoch = epoch
-
-        torch.save(
-            {
-                'epoch': epoch,
-                'min_loss': min_loss,
-                'min_epoch': min_epoch,
-                'loss': loss,
-                'model_state_dict': model.module.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-            }, os.path.join(checkpoint_dir, 'latest.pth')) 
-
+        loss_values.append(train_loss)
+            
         plt.figure()
         ax = plt.gca()
         ax.plot(loss_values)
@@ -148,24 +130,37 @@ def main(config):
         plt.savefig(os.path.join(config.work_dir, f"loss.png"))
         plt.close()
 
-    if os.path.exists(os.path.join(checkpoint_dir, 'best.pth')):
-        print('#----------Testing----------#')
-        best_weight = torch.load(config.work_dir + 'checkpoints/best.pth', map_location=torch.device('cpu'))
-        model.module.load_state_dict(best_weight)
-        loss = test_one_epoch(
-                test_loader,
-                model,
-                criterion,
-                logger,
-                config,
-            )
-        os.rename(
-            os.path.join(checkpoint_dir, 'best.pth'),
-            os.path.join(checkpoint_dir, f'best-epoch{min_epoch}-loss{min_loss:.4f}.pth')
-        )      
+        # if os.path.exists(os.path.join(checkpoint_dir, 'best.pth')):
+
+        if epoch>30 and epoch % 10 == 0:
+            loss = val_one_epoch(
+                            val_loader,
+                            model,
+                            criterion,
+                            epoch,
+                            logger,
+                            config
+                        )
+
+            torch.save(model.module.state_dict(), os.path.join(checkpoint_dir, 'best.pth'))
+
+            print('#----------Testing----------#')
+            best_weight = torch.load(config.work_dir + 'checkpoints/best.pth', map_location=torch.device('cpu'))
+            model.module.load_state_dict(best_weight)
+            loss,miou,f1_or_dsc = test_one_epoch(
+                    test_loader,
+                    model,
+                    criterion,
+                    logger,
+                    config,
+                )
+            if miou > max_miou:
+                max_miou = miou
+                os.rename(
+                    os.path.join(checkpoint_dir, 'best.pth'),
+                    os.path.join(checkpoint_dir, f'best-epoch{epoch}-miou{miou:.4f}-f1_or_dsc{f1_or_dsc:.4f}.pth')
+                )      
 
 
 if __name__ == '__main__':
-    config = setting_config
-    add_argument_config(config)
     main(config)
