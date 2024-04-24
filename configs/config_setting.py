@@ -20,8 +20,11 @@ class setting_config:
         parser.add_argument('--epochs', type=int, default=None, help='epochs')
         parser.add_argument('--datasets', type=str, default=None, help='dataset name')
         parser.add_argument('--test_name', type=str, default=None, help='test model name')
-
+        
         args = parser.parse_args()
+        if args.work_dir is not None:
+            args.work_dir = os.path.join(args.work_dir, args.datasets)+'/' + datetime.now().strftime('%Y_%B_%d_%Hh_%Mm') + '/'
+
         for k, v in vars(args).items():
             if v is not None:
                 # print(f'update config: {k} = {v}')
