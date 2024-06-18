@@ -1,7 +1,9 @@
 from torchvision import transforms
 from utils import *
-
 from datetime import datetime
+from datasets.dataset import *
+import argparse
+from loader import *
 
 class setting_config:
     """
@@ -9,7 +11,7 @@ class setting_config:
     """
     @classmethod
     def add_argument_config(cls):
-        parser = argparse.ArgumentParser(description='UltraLight_VM_UNet')
+        parser = argparse.ArgumentParser(description='VM_UNet')
         parser.add_argument('--work_dir', type=str, default=None, help='result directory path')
         parser.add_argument('--data_path', type=str, default=None, help='data path')
         parser.add_argument('--opt', type=str, default=None, help='optimizer')
@@ -18,17 +20,46 @@ class setting_config:
         parser.add_argument('--lr', type=float, default=None, help='learning rate')
         parser.add_argument('--batch_size', type=int, default=None, help='batch size')
         parser.add_argument('--epochs', type=int, default=None, help='epochs')
-        parser.add_argument('--datasets', type=str, default=None, help='dataset name')
+        parser.add_argument('--datasets_name', type=str, default=None, help='dataset name')
         parser.add_argument('--test_name', type=str, default=None, help='test model name')
-        
         args = parser.parse_args()
-        if args.work_dir is not None:
-            args.work_dir = os.path.join(args.work_dir, args.datasets)+'/' + datetime.now().strftime('%Y_%B_%d_%Hh_%Mm') + '/'
+
+        args.datasets_name = args.datasets_name.lower()
+        if args.work_dir is None:
+            args.work_dir = os.path.join('/home/ljc/results_mamba1_msc/', args.datasets_name, datetime.now().strftime('%Y_%B_%d_%Hh_%Mm'))
 
         for k, v in vars(args).items():
             if v is not None:
-                # print(f'update config: {k} = {v}')
                 setattr(cls, k, v)
+
+    @classmethod
+    def set_datasets(cls):
+        if cls.datasets_name == 'isic2017':
+            cls.data_path = '/home/ljc/data/ISIC2017/'
+            cls.datasets = isic_loader
+            cls.criterion = BceDiceLoss()
+        elif cls.datasets_name == 'isic2018':
+            cls.data_path = '/home/ljc/data/ISIC2018/'
+            cls.datasets = isic_loader
+            cls.criterion = BceDiceLoss()
+        elif cls.datasets_name == 'synapse':
+            cls.data_path = '/home/ljc/data/Synapse/train_npz/'
+            cls.datasets = Synapse_dataset
+            cls.list_dir = '/home/ljc/VM-UNet-mamba1/lists/lists_Synapse/'
+            cls.volume_path = '/home/ljc/data/Synapse/test_vol_h5/'
+            cls.model_config['num_classes'] = 9
+            cls.criterion = CeDiceLoss(9, cls.loss_weight)
+        elif cls.datasets_name == 'acdc':
+            cls.data_path = '/home/ljc/data/ACDC/'
+            cls.datasets = ACDC_dataset
+            cls.list_dir = '/home/ljc/VM-UNet-baseline/lists/lists_ACDC/'
+            cls.volume_path = '/home/ljc/data/ACDC/test/'
+            cls.model_config['num_classes'] = 4
+            cls.criterion = CeDiceLoss(4, cls.loss_weight)
+        else:
+            raise Exception('datasets_name in not right!')
+        print('data path:', cls.data_path)
+    
 
     @classmethod
     def set_opt_sch(cls):
@@ -53,7 +84,7 @@ class setting_config:
             cls.lr = 0.001 if not hasattr(cls, 'lr') else cls.lr # default: 1e-3 – learning rate
             cls.betas = (0.9, 0.999) # default: (0.9, 0.999) – coefficients used for computing running averages of gradient and its square
             cls.eps = 1e-8 # default: 1e-8 – term added to the denominator to improve numerical stability
-            cls.weight_decay = 1e-2 # default: 1e-2 – weight decay coefficient
+            cls.weight_decay = 0.01 # default: 1e-2 – weight decay coefficient
             cls.amsgrad = False # default: False – whether to use the AMSGrad variant of this algorithm from the paper On the Convergence of Adam and Beyond 
         elif cls.opt == 'Adamax':
             cls.lr = 2e-3 if not hasattr(cls, 'lr') else cls.lr # default: 2e-3 – learning rate
@@ -123,45 +154,47 @@ class setting_config:
 
 
 
-    network = 'UltraLight_VM_UNet' 
+    # network = 'UltraLight_VM_UNet' 
+    # model_config = {
+    #     'num_classes': 1,
+    #     'input_channels': 3,
+    #     'c_list': [8,16,24,32,48,64],
+    #     'split_att': 'fc',
+    #     'bridge': False,
+    # }
+    network = 'vmunet'
     model_config = {
-        'num_classes': 1,
-        'input_channels': 3,
-        'c_list': [8,16,24,32,48,64],
-        'split_att': 'fc',
-        'bridge': False,
+        'num_classes': 1, 
+        'input_channels': 3, 
+        # ----- VM-UNet ----- #
+        'depths': [2,2,2,2],
+        'depths_decoder': [2,2,2,1],
+        'drop_path_rate': 0.2,
+        'load_ckpt_path': 'VM-UNet-mamba1/pre_trained_weights/vmamba_small_e238_ema.pth',
     }
 
     test_weights = ''
 
-    datasets = 'ISIC2017'
-    if datasets == 'ISIC2017':
-        data_path = '/home/ljc/data/ISIC2017/'
-    elif datasets == 'ISIC2018':
-        data_path = '/home/ljc/data/ISIC2018/'
-    elif datasets == 'PH2':
-        data_path = ''
-    else:
-        raise Exception('datasets in not right!')
+    datasets_name = 'ISIC2017'
 
-    criterion = BceDiceLoss()
-
-    num_classes = 1
+    # num_classes = 1
     input_size_h = 256
     input_size_w = 256
     input_channels = 3
     distributed = False
     local_rank = -1
-    num_workers = 0
+    num_workers = 8
     seed = 42
     world_size = None
     rank = None
     amp = False
+    loss_weight = [0.4, 0.6]
     batch_size = 24
     epochs = 600
 
-    # work_dir = 'results/' + network + '_' + datasets + '_' + datetime.now().strftime('%A_%d_%B_%Y_%Hh_%Mm_%Ss') + '/'
-    work_dir = 'results/' + datasets + '_' + datetime.now().strftime('%d_%B_%Y_%Hh_%Mm_%Ss') + '/'
+    # work_dir = 'results/' + network + '_' + datasets_name + '_' + datetime.now().strftime('%A_%d_%B_%Y_%Hh_%Mm_%Ss') + '/'
+    # work_dir = 'results/' + datasets_name + '_' + datetime.now().strftime('%d_%B_%Y_%Hh_%Mm_%Ss') + '/'
+    work_dir = ''
     # work_dir = '/home/ljc/ulvm/results/UltraLight_VM_UNet_ISIC2018_Sunday_07_April_2024_14h_35m_10s/'
 
     print_interval = 20
@@ -170,3 +203,4 @@ class setting_config:
     threshold = 0.5
 
     opt = 'AdamW'
+

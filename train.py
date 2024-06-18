@@ -4,12 +4,13 @@ from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from loader import *
 import matplotlib.pyplot as plt
-from models.UltraLight_VM_UNet import UltraLight_VM_UNet
+from models.vmunet.vmunet import VMUNet
 from engine import *
+from engine_synapse import * 
 import os
 import sys
 os.environ["CUDA_VISIBLE_DEVICES"] = "0" # "0, 1, 2, 3"
-
+from datasets.dataset import RandomGenerator
 from utils import *
 from configs.config_setting import setting_config
 
@@ -17,11 +18,12 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def main(config):
+def main():
 
     # get configs from setting_config and command line arguments
     config = setting_config
     config.add_argument_config()
+    config.set_datasets()
     config.set_opt_sch()
 
     print('#----------Creating logger----------#')
@@ -46,37 +48,63 @@ def main(config):
     torch.cuda.empty_cache()
 
     print('#----------Preparing dataset----------#')
-    train_dataset = isic_loader(path_Data = config.data_path, train = True)
-    train_loader = DataLoader(train_dataset,
-                                batch_size=config.batch_size, 
-                                shuffle=True,
-                                pin_memory=True,
-                                num_workers=config.num_workers)
-    val_dataset = isic_loader(path_Data = config.data_path, train = False)
-    val_loader = DataLoader(val_dataset,
-                                batch_size=1,
-                                shuffle=False,
-                                pin_memory=True, 
-                                num_workers=config.num_workers,
-                                drop_last=True)
-    test_dataset = isic_loader(path_Data = config.data_path, train = False, Test = True)
-    test_loader = DataLoader(test_dataset,
-                                batch_size=1,
-                                shuffle=False,
-                                pin_memory=True, 
-                                num_workers=config.num_workers,
-                                drop_last=True)
+    if config.datasets_name == "isic2017" or config.datasets_name == "isic2018":
+        train_dataset = config.datasets(path_Data = config.data_path, train = True)
+        train_loader = DataLoader(train_dataset,
+                                    batch_size=config.batch_size, 
+                                    shuffle=True,
+                                    pin_memory=True,
+                                    num_workers=config.num_workers)
+        val_dataset = config.datasets(path_Data = config.data_path, train = False)
+        val_loader = DataLoader(val_dataset,
+                                    batch_size=1,
+                                    shuffle=False,
+                                    pin_memory=True, 
+                                    num_workers=config.num_workers,
+                                    drop_last=True)
+        test_dataset = config.datasets(path_Data = config.data_path, train = False, Test = True)
+        test_loader = DataLoader(test_dataset,
+                                    batch_size=1,
+                                    shuffle=False,
+                                    pin_memory=True, 
+                                    num_workers=config.num_workers,
+                                    drop_last=True)
+    elif config.datasets_name == "synapse" or config.datasets_name == "acdc":
+        train_dataset = config.datasets(base_dir=config.data_path, list_dir=config.list_dir, split="train",
+                            transform=transforms.Compose(
+                                [RandomGenerator(output_size=[config.input_size_h, config.input_size_w])]))
+        train_sampler = DistributedSampler(train_dataset, shuffle=True) if config.distributed else None
+        train_loader = DataLoader(train_dataset,
+                                    batch_size=config.batch_size//gpus_num if config.distributed else config.batch_size, 
+                                    shuffle=(train_sampler is None),
+                                    pin_memory=True,
+                                    num_workers=config.num_workers,
+                                    sampler=train_sampler)
 
+        val_dataset = config.datasets(base_dir=config.volume_path, split="test_vol", list_dir=config.list_dir)
+        val_sampler = DistributedSampler(val_dataset, shuffle=False) if config.distributed else None
+        val_loader = DataLoader(val_dataset,
+                                batch_size=1, # if config.distributed else config.batch_size,
+                                shuffle=False,
+                                pin_memory=True, 
+                                num_workers=config.num_workers, 
+                                sampler=val_sampler,
+                                drop_last=True)
     print('#----------Prepareing Models----------#')
-    model_cfg = config.model_config
-    model = UltraLight_VM_UNet(num_classes=model_cfg['num_classes'], 
-                               input_channels=model_cfg['input_channels'], 
-                               c_list=model_cfg['c_list'], 
-                               split_att=model_cfg['split_att'], 
-                               bridge=model_cfg['bridge'],)
-    
-    model = torch.nn.DataParallel(model.cuda(), device_ids=gpu_ids, output_device=gpu_ids[0])
 
+    model_cfg = config.model_config
+    model = VMUNet(
+        num_classes=model_cfg['num_classes'],
+        input_channels=model_cfg['input_channels'],
+        depths=model_cfg['depths'],
+        depths_decoder=model_cfg['depths_decoder'],
+        drop_path_rate=model_cfg['drop_path_rate'],
+        load_ckpt_path=model_cfg['load_ckpt_path'],
+    )
+    model.load_from()
+    model = model.cuda()
+
+    cal_params_flops(model, 256, logger)
     print('#----------Prepareing loss, opt, sch and amp----------#')
     criterion = config.criterion
     optimizer = get_optimizer(config, model)
@@ -90,7 +118,7 @@ def main(config):
     if os.path.exists(resume_model):
         print('#----------Resume Model and Other params----------#')
         checkpoint = torch.load(resume_model, map_location=torch.device('cpu'))
-        model.module.load_state_dict(checkpoint['model_state_dict'])
+        model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         saved_epoch = checkpoint['epoch']
@@ -130,24 +158,24 @@ def main(config):
         plt.savefig(os.path.join(config.work_dir, f"loss.png"))
         plt.close()
 
-        # if os.path.exists(os.path.join(checkpoint_dir, 'best.pth')):
 
-        if epoch>30 and epoch % 10 == 0:
-            loss = val_one_epoch(
-                            val_loader,
-                            model,
-                            criterion,
-                            epoch,
-                            logger,
-                            config
-                        )
+        torch.save(
+            {
+                'epoch': epoch,
+                'min_loss': min_loss,
+                'min_epoch': min_epoch,
+                'loss': train_loss,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+            }, os.path.join(checkpoint_dir, 'latest.pth'))
 
-            torch.save(model.module.state_dict(), os.path.join(checkpoint_dir, 'best.pth'))
+        if epoch > 30 and epoch % 10 == 0:
 
             print('#----------Testing----------#')
-            best_weight = torch.load(config.work_dir + 'checkpoints/best.pth', map_location=torch.device('cpu'))
-            model.module.load_state_dict(best_weight)
-            loss,miou,f1_or_dsc = test_one_epoch(
+            # best_weight = torch.load(config.work_dir + 'checkpoints/best.pth', map_location=torch.device('cpu'))
+            # model.module.load_state_dict(best_weight)
+            loss, miou, f1_or_dsc = test_one_epoch(
                     test_loader,
                     model,
                     criterion,
@@ -155,12 +183,9 @@ def main(config):
                     config,
                 )
             if miou > max_miou:
+                torch.save(model.state_dict(), os.path.join(checkpoint_dir,f'epoch{epoch}-miou{miou:.4f}-dsc{f1_or_dsc:.4f}.pth'))
                 max_miou = miou
-                os.rename(
-                    os.path.join(checkpoint_dir, 'best.pth'),
-                    os.path.join(checkpoint_dir, f'best-epoch{epoch}-miou{miou:.4f}-f1_or_dsc{f1_or_dsc:.4f}.pth')
-                )      
 
 
 if __name__ == '__main__':
-    main(config)
+    main()

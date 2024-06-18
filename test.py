@@ -18,15 +18,17 @@ warnings.filterwarnings("ignore")
 
 
 
-def main(config):
+def main():
     # get configs from setting_config and command line arguments
     config = setting_config
-    add_argument_config(config)
+    config.add_argument_config()
+    config.set_opt_sch()
 
     print('#----------Creating logger----------#')
     # if config.work_dir not exist, throw an error
-    if not os.path.exists(config.work_dir):
-        raise Exception('work_dir is not exist!')
+    # if not os.path.exists(config.work_dir):
+    #     print('--',config.work_dir)
+    #     raise Exception('work_dir is not exist!')
     log_dir = os.path.join(config.work_dir, 'log')
     checkpoint_dir = os.path.join(config.work_dir, 'checkpoints')
 
@@ -107,5 +109,4 @@ def main(config):
 
 
 if __name__ == '__main__':
-    config = setting_config
-    main(config)
+    main()

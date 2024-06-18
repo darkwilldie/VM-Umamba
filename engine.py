@@ -25,7 +25,14 @@ def train_one_epoch(train_loader,
     t_loss = 0
     for iter, data in enumerate(train_loader):
         optimizer.zero_grad()
-        images, targets = data
+
+        if type(data) is list:
+            images, targets = data
+        elif type(data) is dict:
+            images, targets = data['image'], data['label']
+        else:
+            raise ValueError('data type is not list or dict')
+
         images, targets = images.cuda(non_blocking=True).float(), targets.cuda(non_blocking=True).float()
         if config.amp:
             with autocast():
