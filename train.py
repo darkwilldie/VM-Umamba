@@ -6,7 +6,6 @@ from loader import *
 import matplotlib.pyplot as plt
 from models.vmunet.vmunet import VMUNet
 from engine import *
-from engine_synapse import * 
 import os
 import sys
 os.environ["CUDA_VISIBLE_DEVICES"] = "0" # "0, 1, 2, 3"
@@ -104,7 +103,13 @@ def main():
     model.load_from()
     model = model.cuda()
 
-    cal_params_flops(model, 256, logger)
+    if config.distributed:
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).cuda()
+        model = DDP(model, device_ids=[config.local_rank], output_device=config.local_rank)
+    else:
+        model = torch.nn.DataParallel(model.cuda(), device_ids=gpu_ids, output_device=gpu_ids[0])
+
+    # cal_params_flops(model, 256, logger)
     print('#----------Prepareing loss, opt, sch and amp----------#')
     criterion = config.criterion
     optimizer = get_optimizer(config, model)
@@ -114,7 +119,9 @@ def main():
     min_loss = 999
     start_epoch = 1
     min_epoch = 1
-    max_miou  = 0 
+    max_dice = 0
+    max_dsc  = 0.88
+
     if os.path.exists(resume_model):
         print('#----------Resume Model and Other params----------#')
         checkpoint = torch.load(resume_model, map_location=torch.device('cpu'))
@@ -134,8 +141,21 @@ def main():
     for epoch in tqdm(range(start_epoch, config.epochs + 1)):
 
         torch.cuda.empty_cache()
-
-        train_loss = train_one_epoch(
+        train_sampler.set_epoch(epoch) if config.distributed else None
+        if config.datasets_name == "isic2017" or config.datasets_name == "isic2018":
+            train_loss = train_one_epoch_isic(
+                train_loader,
+                model,
+                criterion,
+                optimizer,
+                scheduler,
+                epoch,
+                logger,
+                config,
+                scaler=scaler
+            )
+        elif config.datasets_name == "synapse" or config.datasets_name == "acdc":
+            train_loss = train_one_epoch_sy_ac(
             train_loader,
             model,
             criterion,
@@ -170,22 +190,34 @@ def main():
                 'scheduler_state_dict': scheduler.state_dict(),
             }, os.path.join(checkpoint_dir, 'latest.pth'))
 
-        if epoch > 30 and epoch % 10 == 0:
-
-            print('#----------Testing----------#')
-            # best_weight = torch.load(config.work_dir + 'checkpoints/best.pth', map_location=torch.device('cpu'))
-            # model.module.load_state_dict(best_weight)
-            loss, miou, f1_or_dsc = test_one_epoch(
-                    test_loader,
-                    model,
-                    criterion,
-                    logger,
-                    config,
-                )
-            if miou > max_miou:
-                torch.save(model.state_dict(), os.path.join(checkpoint_dir,f'epoch{epoch}-miou{miou:.4f}-dsc{f1_or_dsc:.4f}.pth'))
-                max_miou = miou
-
+        if config.datasets_name == "isic2017" or config.datasets_name == "isic2018":
+            if epoch > 30 and epoch % 20 == 0:
+                loss, miou, f1_or_dsc = test_one_epoch(
+                        test_loader,
+                        model,
+                        criterion,
+                        logger,
+                        config,
+                    )
+                if f1_or_dsc > max_dsc:
+                    print('---saving best model---')
+                    torch.save(model.state_dict(), os.path.join(checkpoint_dir,f'epoch{epoch}-miou{miou:.4f}-dsc{f1_or_dsc:.4f}.pth'))
+                    max_dsc = f1_or_dsc
+        elif config.datasets_name == "synapse" or config.datasets_name == "acdc":
+            if epoch > 100 and epoch % 20 == 0:
+                mean_dice, mean_hd95 = val_one_epoch_(
+                val_dataset,
+                val_loader,
+                model,
+                epoch,
+                logger,
+                config,
+                test_save_path=outputs,
+                val_or_test=True
+            )
+                if mean_dice > max_dice:
+                    torch.save(model.state_dict(), os.path.join(checkpoint_dir,f'epoch:{epoch}-mean_dice:{mean_dice:.4f}-mean_hd95:{mean_hd95:.4f}.pth'))
+                    max_dice = mean_dice
 
 if __name__ == '__main__':
     main()

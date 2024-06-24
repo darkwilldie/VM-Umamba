@@ -487,20 +487,17 @@ class VSSBlock(nn.Module):
     ):
         super().__init__()
         self.ln_1 = norm_layer(hidden_dim)
+        self.norm2 = nn.LayerNorm(hidden_dim)
         self.self_attention = SS2D(d_model=hidden_dim, dropout=attn_drop_rate, d_state=d_state, **kwargs)
         self.drop_path = DropPath(drop_path)
 
-        self.msc = MSC(hidden_dim)
-        # self.ca = ChannelAttention(hidden_dim)
-        # self.sa = SpatialAttention(3)
+        
+        # self.mlp = EinFFT(hidden_dim)
 
     def forward(self, input: torch.Tensor):
-        
-        msc_out = self.msc(input)
-        # msc_out = msc_out * self.ca(msc_out)
-        # msc_out = msc_out * self.sa(msc_out)
+        # B, H, W, C = input.shape
+        # msc_out = self.msc(input)
         x = input + self.drop_path(self.self_attention(self.ln_1(input)))
-        x = msc_out + x
         return x
 
 
@@ -561,51 +558,26 @@ class VSSLayer(nn.Module):
             self.apply(_init_weights)
 
         self.msc = MSC(dim)
-        self.act = nn.ReLU6()
+        self.ca = ChannelAttention(dim)
+        self.sa = SpatialAttention(3)
         if downsample is not None:
             self.downsample = downsample(dim=dim, norm_layer=norm_layer)
         else:
             self.downsample = None
 
-        # self.ca = ChannelAttention(dim)
-        # self.sa = SpatialAttention(7)
-        # self.restormer_attn = SparseAttention(dim, num_heads=6, bias=False, tlc_flag=True, tlc_kernel=48, activation='relu', input_resolution=None)
-
     def forward(self, x):
         B, H ,W ,C = x.shape
+        x_copy = x.clone()
+        msc_out = self.msc(x)
+        ca_out = x_copy*self.ca(x_copy)
+        sa_out = ca_out*self.sa(ca_out)
+        x = x + msc_out  + sa_out
         for blk in self.blocks:
             if self.use_checkpoint:
-                mamba_out = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x)
             else:
-                # mamba_in  = rearrange(x, 'b h w c-> b (h w) c').contiguous()
-                # mamba_out = blk(mamba_in)
-                # print("--",mamba_out.shape)
-                # assert False
-                mamba_out = blk(x)
+                x = blk(x)
 
-        # msc_out = self.msc(x)
-        
-        # x = self.act(msc_out)*mamba_out
-        
-        # x = x.permute(0,3,1,2)
-        # x  = self.restormer_attn(x)
-        # x = x.permute(0,2,3,1)
-
-        # msc_out = msc_out.permute(0,3,1,2)
-        # msc_out  = self.restormer_attn(msc_out)
-        # msc_out = msc_out.permute(0,2,3,1)
-
-        # msc_out = msc_out * self.ca(msc_out)
-        # msc_out = msc_out * self.sa(msc_out)
-
-        # mamba_out = mamba_out * self.ca(mamba_out)
-        # mamba_out = mamba_out * self.sa(mamba_out)
-
-        # print('--',msc_out.shape,mamba_out.shape)
-        # assert False
-        # x = msc_out + mamba_out
-        # x = self.act(msc_out)*mamba_out
-        # x = msc_out*self.act(mamba_out)
         if self.downsample is not None:
             x = self.downsample(x)
 
@@ -674,40 +646,20 @@ class VSSLayer_up(nn.Module):
         else:
             self.upsample = None
 
-        # self.msc = MSC(dim)
-        # self.act = nn.ReLU6()
-        # self.ca = ChannelAttention(dim)
-        # self.sa = SpatialAttention(7)
-
-        # self.restormer_attn = SparseAttention(dim, num_heads=6, bias=False, tlc_flag=True, tlc_kernel=48, activation='relu', input_resolution=None)
+        self.msc = MSC(dim)
+        self.ca = ChannelAttention(dim)
+        self.sa = SpatialAttention(3)
     def forward(self, x):
         if self.upsample is not None:
             x = self.upsample(x)
         for blk in self.blocks:
             if self.use_checkpoint:
-                mamba_out = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x)
             else:
-                mamba_out = blk(x)
-
-        # msc_out = self.msc(x)
-        # msc_out = msc_out * self.ca(msc_out)
-        # msc_out = msc_out * self.sa(msc_out)
-
-        # mamba_out = mamba_out * self.ca(mamba_out)
-        # mamba_out = mamba_out * self.sa(mamba_out)
-
-        # x = self.act(msc_out)*mamba_out
-
-        # x = msc_out + mamba_out
-        
-        # x = x.permute(0,3,1,2)
-        # x  = self.restormer_attn(x)
-        # x = x.permute(0,2,3,1)
+                x = blk(x)
         
         return x
     
-
-
 class VSSM(nn.Module):
     def __init__(self, patch_size=4, in_chans=3, num_classes=1000, depths=[2, 2, 9, 2], depths_decoder=[2, 9, 2, 2],
                  dims=[96, 192, 384, 768], dims_decoder=[768, 384, 192, 96], d_state=16, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
@@ -935,3 +887,215 @@ class SpatialAttention(nn.Module):
         x = x.permute(0,2,3,1)
         return x
     
+# class VRWKV_SpatialMix(BaseModule):
+#     def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift',
+#                  channel_gamma=1/4, shift_pixel=1, init_mode='fancy',
+#                  key_norm=False):
+#         super().__init__()
+#         self.layer_id = layer_id
+#         self.n_layer = n_layer
+#         self.n_embd = n_embd
+#         self.device = None
+#         attn_sz = n_embd
+#         self._init_weights(init_mode)
+#         self.shift_pixel = shift_pixel
+#         self.shift_mode = shift_mode
+#         if shift_pixel > 0:
+#             self.shift_func = eval(shift_mode)
+#             self.channel_gamma = channel_gamma
+#         else:
+#             self.spatial_mix_k = None
+#             self.spatial_mix_v = None
+#             self.spatial_mix_r = None
+
+#         self.key = nn.Linear(n_embd, attn_sz, bias=False)
+#         self.value = nn.Linear(n_embd, attn_sz, bias=False)
+#         self.receptance = nn.Linear(n_embd, attn_sz, bias=False)
+#         if key_norm:
+#             self.key_norm = nn.LayerNorm(attn_sz)
+#         else:
+#             self.key_norm = None
+#         self.output = nn.Linear(attn_sz, n_embd, bias=False)
+
+#         self.key.scale_init = 0
+#         self.receptance.scale_init = 0
+#         self.output.scale_init = 0
+
+#     def _init_weights(self, init_mode):
+#         if init_mode=='fancy':
+#             with torch.no_grad(): # fancy init
+#                 ratio_0_to_1 = (self.layer_id / (self.n_layer - 1)) # 0 to 1
+#                 ratio_1_to_almost0 = (1.0 - (self.layer_id / self.n_layer)) # 1 to ~0
+                
+#                 # fancy time_decay
+#                 decay_speed = torch.ones(self.n_embd)
+#                 for h in range(self.n_embd):
+#                     decay_speed[h] = -5 + 8 * (h / (self.n_embd-1)) ** (0.7 + 1.3 * ratio_0_to_1)
+#                 self.spatial_decay = nn.Parameter(decay_speed)
+
+#                 # fancy time_first
+#                 zigzag = (torch.tensor([(i+1)%3 - 1 for i in range(self.n_embd)]) * 0.5)
+#                 self.spatial_first = nn.Parameter(torch.ones(self.n_embd) * math.log(0.3) + zigzag)
+                
+#                 # fancy time_mix
+#                 x = torch.ones(1, 1, self.n_embd)
+#                 for i in range(self.n_embd):
+#                     x[0, 0, i] = i / self.n_embd
+#                 self.spatial_mix_k = nn.Parameter(torch.pow(x, ratio_1_to_almost0))
+#                 self.spatial_mix_v = nn.Parameter(torch.pow(x, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
+#                 self.spatial_mix_r = nn.Parameter(torch.pow(x, 0.5 * ratio_1_to_almost0))
+#         elif init_mode=='local':
+#             self.spatial_decay = nn.Parameter(torch.ones(self.n_embd))
+#             self.spatial_first = nn.Parameter(torch.ones(self.n_embd))
+#             self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]))
+#             self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, self.n_embd]))
+#             self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]))
+#         elif init_mode=='global':
+#             self.spatial_decay = nn.Parameter(torch.zeros(self.n_embd))
+#             self.spatial_first = nn.Parameter(torch.zeros(self.n_embd))
+#             self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
+#             self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
+#             self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
+#         else:
+#             raise NotImplementedError
+
+#     def jit_func(self, x, patch_resolution):
+#         # Mix x with the previous timestep to produce xk, xv, xr
+#         B, T, C = x.size()
+#         if self.shift_pixel > 0:
+#             xx = self.shift_func(x, self.shift_pixel, self.channel_gamma, patch_resolution)
+#             xk = x * self.spatial_mix_k + xx * (1 - self.spatial_mix_k)
+#             xv = x * self.spatial_mix_v + xx * (1 - self.spatial_mix_v)
+#             xr = x * self.spatial_mix_r + xx * (1 - self.spatial_mix_r)
+#         else:
+#             xk = x
+#             xv = x
+#             xr = x
+
+#         # Use xk, xv, xr to produce k, v, r
+#         k = self.key(xk)
+#         v = self.value(xv)
+#         r = self.receptance(xr)
+#         sr = torch.sigmoid(r)
+
+#         return sr, k, v
+
+#     def forward(self, x, patch_resolution):
+#         B, T, C = x.size()
+#         self.device = x.device
+
+#         sr, k, v = self.jit_func(x, patch_resolution)
+#         rwkv = RUN_CUDA(B, T, C, self.spatial_decay / T, self.spatial_first / T, k, v)
+#         if self.key_norm is not None:
+#             rwkv = self.key_norm(rwkv)
+#         rwkv = sr * rwkv
+#         rwkv = self.output(rwkv)
+#         return rwkv
+
+
+# class VRWKV_ChannelMix(BaseModule):
+#     def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift',
+#                  channel_gamma=1/4, shift_pixel=1, hidden_rate=4, init_mode='fancy',
+#                  key_norm=False):
+#         super().__init__()
+#         self.layer_id = layer_id
+#         self.n_layer = n_layer
+#         self.n_embd = n_embd
+#         self._init_weights(init_mode)
+#         self.shift_pixel = shift_pixel
+#         self.shift_mode = shift_mode
+#         if shift_pixel > 0:
+#             self.shift_func = eval(shift_mode)
+#             self.channel_gamma = channel_gamma
+#         else:
+#             self.spatial_mix_k = None
+#             self.spatial_mix_r = None
+
+#         hidden_sz = hidden_rate * n_embd
+#         self.key = nn.Linear(n_embd, hidden_sz, bias=False)
+#         if key_norm:
+#             self.key_norm = nn.LayerNorm(hidden_sz)
+#         else:
+#             self.key_norm = None
+#         self.receptance = nn.Linear(n_embd, n_embd, bias=False)
+#         self.value = nn.Linear(hidden_sz, n_embd, bias=False)
+
+#         self.value.scale_init = 0
+#         self.receptance.scale_init = 0
+
+#     def _init_weights(self, init_mode):
+#         if init_mode == 'fancy':
+#             with torch.no_grad(): # fancy init of time_mix
+#                 ratio_1_to_almost0 = (1.0 - (self.layer_id / self.n_layer)) # 1 to ~0
+#                 x = torch.ones(1, 1, self.n_embd)
+#                 for i in range(self.n_embd):
+#                     x[0, 0, i] = i / self.n_embd
+#                 self.spatial_mix_k = nn.Parameter(torch.pow(x, ratio_1_to_almost0))
+#                 self.spatial_mix_r = nn.Parameter(torch.pow(x, ratio_1_to_almost0))
+#         elif init_mode == 'local':
+#             self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]))
+#             self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]))
+#         elif init_mode == 'global':
+#             self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
+#             self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
+#         else:
+#             raise NotImplementedError
+
+#     def forward(self, x, patch_resolution):
+#         if self.shift_pixel > 0:
+#             xx = self.shift_func(x, self.shift_pixel, self.channel_gamma, patch_resolution)
+#             xk = x * self.spatial_mix_k + xx * (1 - self.spatial_mix_k)
+#             xr = x * self.spatial_mix_r + xx * (1 - self.spatial_mix_r)
+#         else:
+#             xk = x
+#             xr = x
+
+#         k = self.key(xk)
+#         k = torch.square(torch.relu(k))
+#         if self.key_norm is not None:
+#             k = self.key_norm(k)
+#         kv = self.value(k)
+
+#         rkv = torch.sigmoid(self.receptance(xr)) * kv
+#         return rkv
+
+
+class EinFFT(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.hidden_size = dim #768
+        self.num_blocks = 4 
+        self.block_size = self.hidden_size // self.num_blocks 
+        assert self.hidden_size % self.num_blocks == 0
+        self.sparsity_threshold = 0.01
+        self.scale = 0.02
+
+        self.complex_weight_1 = nn.Parameter(torch.randn(2, self.num_blocks, self.block_size, self.block_size, dtype=torch.float32) * self.scale)
+        self.complex_weight_2 = nn.Parameter(torch.randn(2, self.num_blocks, self.block_size, self.block_size, dtype=torch.float32) * self.scale)
+        self.complex_bias_1 = nn.Parameter(torch.randn(2, self.num_blocks, self.block_size,  dtype=torch.float32) * self.scale)
+        self.complex_bias_2 = nn.Parameter(torch.randn(2, self.num_blocks, self.block_size,  dtype=torch.float32) * self.scale)
+
+    def multiply(self, input, weights):
+        return torch.einsum('...bd,bdk->...bk', input, weights)
+
+    def forward(self, x, H, W):
+        B, N, C = x.shape
+        x = x.view(B, N, self.num_blocks, self.block_size )
+
+        x = torch.fft.fft2(x, dim=(1,2), norm='ortho') # FFT on N dimension
+
+        x_real_1 = F.relu(self.multiply(x.real, self.complex_weight_1[0]) - self.multiply(x.imag, self.complex_weight_1[1]) + self.complex_bias_1[0])
+        x_imag_1 = F.relu(self.multiply(x.real, self.complex_weight_1[1]) + self.multiply(x.imag, self.complex_weight_1[0]) + self.complex_bias_1[1])
+        x_real_2 = self.multiply(x_real_1, self.complex_weight_2[0]) - self.multiply(x_imag_1, self.complex_weight_2[1]) + self.complex_bias_2[0]
+        x_imag_2 = self.multiply(x_real_1, self.complex_weight_2[1]) + self.multiply(x_imag_1, self.complex_weight_2[0]) + self.complex_bias_2[1]
+
+        x = torch.stack([x_real_2, x_imag_2], dim=-1).float()
+        x = F.softshrink(x, lambd=self.sparsity_threshold) if self.sparsity_threshold else x
+        x = torch.view_as_complex(x)
+
+        x = torch.fft.ifft2(x, dim=(1,2), norm="ortho")
+        
+        # RuntimeError: "fused_dropout" not implemented for 'ComplexFloat'
+        x = x.to(torch.float32)
+        x = x.reshape(B, N, C)
+        return x

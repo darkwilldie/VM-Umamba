@@ -26,7 +26,7 @@ class setting_config:
 
         args.datasets_name = args.datasets_name.lower()
         if args.work_dir is None:
-            args.work_dir = os.path.join('/home/ljc/results_mamba1_msc/', args.datasets_name, datetime.now().strftime('%Y_%B_%d_%Hh_%Mm'))
+            args.work_dir = '/home/ljc/results_Mul_X/'+ args.datasets_name + '/' +  datetime.now().strftime('%Y_%B_%d_%Hh_%Mm') + '/'
 
         for k, v in vars(args).items():
             if v is not None:
@@ -170,7 +170,7 @@ class setting_config:
         'depths': [2,2,2,2],
         'depths_decoder': [2,2,2,1],
         'drop_path_rate': 0.2,
-        'load_ckpt_path': 'VM-UNet-mamba1/pre_trained_weights/vmamba_small_e238_ema.pth',
+        'load_ckpt_path': '/home/ljc/VM-UNet-mamba1/pre_trained_weights/vmamba_small_e238_ema.pth',
     }
 
     test_weights = ''
@@ -190,8 +190,8 @@ class setting_config:
     amp = False
     loss_weight = [0.4, 0.6]
     batch_size = 24
-    epochs = 600
-
+    epochs = 300
+    z_spacing = 1
     # work_dir = 'results/' + network + '_' + datasets_name + '_' + datetime.now().strftime('%A_%d_%B_%Y_%Hh_%Mm_%Ss') + '/'
     # work_dir = 'results/' + datasets_name + '_' + datetime.now().strftime('%d_%B_%Y_%Hh_%Mm_%Ss') + '/'
     work_dir = ''
